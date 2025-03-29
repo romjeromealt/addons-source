@@ -650,3 +650,27 @@ class LxmlGramplet(Gramplet):
             outfile.write(str_out)
 
         root.clear()
+        
+    def post(self, html):
+        """
+        Try to play with request and parse the HTML content.
+        """
+        try:
+            # Open the HTML file
+            with urllib.request.urlopen(f'file://{html}') as response:
+                data = response.read()
+
+            # Parse the HTML content
+            post = etree.HTML(data)
+
+            # Find text function
+            find_text = etree.XPath("//text()", smart_strings=False)
+
+            # Log the text content
+            LOG.info(find_text(post))
+
+            # Clear the parsed HTML content
+            post.clear()
+
+        except Exception as e:
+            LOG.error(f"An error occurred while processing the HTML file: {e}")
