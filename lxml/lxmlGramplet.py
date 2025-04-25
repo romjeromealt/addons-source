@@ -339,11 +339,11 @@ class lxmlGramplet(Gramplet):
 
         try:
             if os.name is 'nt':
-                os.system(f'xmllint --relaxng {rng} --noout {filename}')
+                os.system(f'xmllint --relaxng {rng} --noout {filename} --nonet')
                 LOG.debug('xmllint (relaxng) : %s' % filename)
             else:
                 LOG.debug('xmllint (relaxng) : %s' % filename)
-                os.system(f'xmllint --relaxng file://{rng} --noout {filename}')
+                os.system(f'xmllint --relaxng file://{rng} --noout {filename} --nonet')
         except Exception as e:
             LOG.info(_('xmllint: skip RelaxNG validation for "%(file)s"') % {'file': entry})
 
@@ -678,9 +678,9 @@ class lxmlGramplet(Gramplet):
         dtd = os.path.join(USER_PLUGINS, 'lxml', 'grampsxml.dtd')
         try:
             if os.name is 'nt':
-                os.system(f'xmllint --dtdvalid {dtd} --noout --dropdtd {filename}')
+                os.system(f'xmllint --dtdvalid {dtd} --noout --dropdtd {filename} --nonet')
             else:
-                os.system(f'xmllint --dtdvalid file://{dtd} --noout --dropdtd {filename}')
+                os.system(f'xmllint --dtdvalid file://{dtd} --noout --dropdtd {filename} --nonet')
         except Exception as e:
             LOG.info(_('xmllint: skip DTD validation'))
 
