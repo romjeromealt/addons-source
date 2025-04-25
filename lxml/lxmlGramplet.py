@@ -137,6 +137,11 @@ class lxmlGramplet(Gramplet):
         Constructs the GUI, consisting of an entry, a text view and
         a Run button.
         """
+        self.xmllint = "--noout --nonet"
+        self.noout = True
+        self.nonet = True
+        self.load_trace = False
+        self.testIO = False
 
         # filename and selector
 
@@ -227,6 +232,23 @@ class lxmlGramplet(Gramplet):
         self.__file_name = Path(path).name  # pathlib
         self.entry.set_text(str(Path(os.path.join(self.__base_path, self.__file_name))))  #  pathlib
 
+
+    def build_options(self):
+        from gramps.gen.plug.menu import StringOption, BooleanOption
+        self.add_option(StringOption(_("xmllint options"),
+                                     self.xmllint))
+        self.add_option(BooleanOption("noout", self.noout))
+        self.add_option(BooleanOption("nonet", self.nonet))
+        self.add_option(BooleanOption("load_trace", self.load_trace))
+        self.add_option(BooleanOption("testIO", self.testIO))
+
+
+    def save_options(self):
+        self.xmllint = self.get_option(_("xmllint options")).get_value()
+        self.noout = self.get_option("noout").get_value()
+        self.nonet = self.get_option("nonet").get_value()
+        self.load_trace = self.get_option("load_trace").get_value()
+        self.testIO = self.get_option("testIO").get_value()
 
     def run(self, obj):
         """
@@ -336,14 +358,25 @@ class lxmlGramplet(Gramplet):
         # RNG validation via xmllint (libxml2-utils)
 
         rng = os.path.join(USER_PLUGINS, 'lxml', 'grampsxml.rng')
+        if self.noout:
+            options = "--noout "
+        elif self.nonet:
+            options += "--nonet "
+        else:
+            options = self.xmllint
+
+        if self.load_trace:
+            options += "--load-trace "
+        if self.testIO:
+            options += "--testIO "
 
         try:
             if os.name is 'nt':
-                os.system(f'xmllint --relaxng {rng} --noout {filename} --nonet')
+                os.system(f'xmllint --relaxng {rng} --noout {filename} {options}')
                 LOG.debug('xmllint (relaxng) : %s' % filename)
             else:
                 LOG.debug('xmllint (relaxng) : %s' % filename)
-                os.system(f'xmllint --relaxng file://{rng} --noout {filename} --nonet')
+                os.system(f'xmllint --relaxng file://{rng} --noout {filename} {options}')
         except Exception as e:
             LOG.info(_('xmllint: skip RelaxNG validation for "%(file)s"') % {'file': entry})
 
@@ -670,7 +703,19 @@ class lxmlGramplet(Gramplet):
         """
         Validate the XML file against the DTD schema.
         """
-        self.text.set_text('validating DTD')
+        if self.noout:
+            options = "--noout "
+        elif self.nonet:
+            options += "--nonet "
+        else:
+            options = self.xmllint
+
+        if self.load_trace:
+            options += "--load-trace "
+        if self.testIO:
+            options += "--testIO "
+
+        self.text.set_text(f'validating DTD with {options}')
 
         # syntax check against DTD for file format
         # xmllint --loaddtd --dtdvalid --valid --shell --noout ...
@@ -678,9 +723,9 @@ class lxmlGramplet(Gramplet):
         dtd = os.path.join(USER_PLUGINS, 'lxml', 'grampsxml.dtd')
         try:
             if os.name is 'nt':
-                os.system(f'xmllint --dtdvalid {dtd} --noout --dropdtd {filename} --nonet')
+                os.system(f'xmllint --dtdvalid {dtd} --noout --dropdtd {filename} {options}')
             else:
-                os.system(f'xmllint --dtdvalid file://{dtd} --noout --dropdtd {filename} --nonet')
+                os.system(f'xmllint --dtdvalid file://{dtd} --noout --dropdtd {filename} {options}')
         except Exception as e:
             LOG.info(_('xmllint: skip DTD validation'))
 
