@@ -431,6 +431,25 @@ class RelationTab(tool.Tool, ManagedWindow):
         self.progress.close()
         _LOG.info(f"Total processing time: {time.perf_counter() - step_one} seconds.")
 
+        # Afficher un aperçu des résultats dans la console
+        print("\nAperçu des résultats :")
+        print("-" * 100)
+        print(f"{'ID Kekulé':<10} | {'Relation':<20} | {'Nom':<30} | {'Ga':<5} | {'Gb':<5} | {'MRA':<5} | {'Rang':<5} | {'Période':<15}")
+        if RelationTab.ENABLE_NETWORK_METRICS:
+            print(f"{'':<10} | {'':<20} | {'':<30} | {'':<5} | {'':<5} | {'':<5} | {'':<5} | {'':<15} | {'Sous-arbre partagé':<15} | {'Centralité':<10}")
+        print("-" * 100)
+
+        for entry in self.stats_list[:10]:  # Afficher les 10 premières entrées
+            kekule, relation, name, Ga, Gb, mra, rank, period = entry[:8]
+            print(f"{kekule:<10} | {relation[:18]:<20} | {name[:28]:<30} | {Ga:<5} | {Gb:<5} | {mra:<5} | {rank:<5} | {period[:13]:<15}", end="")
+            if RelationTab.ENABLE_NETWORK_METRICS and len(entry) > 8:
+                shared_subtree_size, centrality = entry[8:]
+                print(f" | {shared_subtree_size:<15} | {centrality:<10}")
+            else:
+                print()
+        print("-" * 100)
+        print(f"Total des entrées traitées : {len(self.stats_list)}\n")
+
 
     #-------------------------------------------------------------------------
     def save(self):
@@ -459,6 +478,9 @@ class RelationTab(tool.Tool, ManagedWindow):
             spreadsheet.set_row(index % 2)
             spreadsheet.write_table_data(entry)
         spreadsheet.finalize()
+
+        # Afficher un message indiquant où le fichier a été enregistré
+        print(f"Le fichier a été enregistré sous : {filename}")
         _LOG.info(f"Data successfully saved to {filename}.")
 
 
