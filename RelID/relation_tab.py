@@ -519,19 +519,19 @@ class RelationTab(tool.Tool, ManagedWindow):
         print("-" * 100)
         print(f"{'ID Kekulé':<10} | {'Relation':<20} | {'Nom':<30} | {'Ga':<5} | {'Gb':<5} | {'MRA':<5} | {'Rang':<5} | {'Période':<15}")
         if RelationTab.ENABLE_NETWORK_METRICS:
-            print(f"{'':<10} | {'':<20} | {'':<30} | {'':<5} | {'':<5} | {'':<5} | {'':<5} | {'':<15} | {'Sous-arbre partagé':<15} | {'Centralité':<10}")
-        print("-" * 100)
+            print(f" | {'Sous-arbre partagé':<15} | {'Centralité':<10} | {'Ancêtres uniques':<15} | {'Diversité noms':<15}")
+        print()  # Saut de ligne
+        print("-" * 150)
 
         for entry in self.stats_list[:10]:  # Afficher les 10 premières entrées
             kekule, relation, name, Ga, Gb, mra, rank, period = entry[:8]
-        print(f"{kekule:<10} | {relation[:18]:<20} | {name[:28]:<30} | {Ga:<5} | {Gb:<5} | {mra:<5} | {rank:<5} | {period[:13]:<15}", end="")
-        if RelationTab.ENABLE_NETWORK_METRICS and len(entry) > 8:
-            shared_subtree_size, centrality, unique_ancestors, surname_diversity = entry[8:12]
-            print(f" | {shared_subtree_size:<15} | {centrality:<10} | {unique_ancestors:<15} | {surname_diversity:.2f}")
-        else:
-            print()
-
-        print("-" * 100)
+            print(f"{kekule:<10} | {relation[:18]:<20} | {name[:28]:<30} | {Ga:<5} | {Gb:<5} | {mra:<5} | {rank:<5} | {period[:13]:<15}", end="")
+            if RelationTab.ENABLE_NETWORK_METRICS and len(entry) > 8:
+                shared_subtree_size, centrality, unique_ancestors, surname_diversity = entry[8:12]
+                print(f" | {shared_subtree_size:<15} | {centrality:<10} | {unique_ancestors:<15} | {surname_diversity:.2f}")
+            else:
+                print()
+        print("-" * 150)
         print(f"Total des entrées traitées : {len(self.stats_list)}\n")
 
 
