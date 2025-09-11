@@ -248,6 +248,9 @@ class RelationTab(tool.Tool, ManagedWindow):
         self.relationship = get_relationship_calculator()
         self.stats_list = []
 
+        # Initialiser window et progress avant de les utiliser
+        window = None
+
         if uistate:
             window = Gtk.Window()
             window.set_default_size(1000, 600)
@@ -388,7 +391,13 @@ class RelationTab(tool.Tool, ManagedWindow):
             relationship = get_relationship_between_people(
                 self.dbstate, self.relationship, default_person, person)
             period = get_timeperiod(self.dbstate.db, handle)
+
+            # Affichage du nom et pseudo-anonymisation
             name = name_displayer.display(person)
+            # Pseudo privacy; sample for DNA stuff and mapping
+            import hashlib
+            no_name = hashlib.sha384(name.encode() + handle.encode()).hexdigest()
+            _LOG.info(no_name)  # Log du hachage pour un usage interne
 
             # Mise à jour du header du ProgressMeter
             step_two = time.perf_counter()
