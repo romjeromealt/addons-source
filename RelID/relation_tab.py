@@ -339,6 +339,14 @@ class RelationTab(tool.Tool, ManagedWindow):
 
 
     #-------------------------------------------------------------------------
+    def long_running_task(self, default_person, person):
+        # Exemple de tâche longue
+        dist = self.relationship.get_relationship_distance_new(
+            self.dbstate.db, default_person, person, only_birth=True)
+        # Traitement des résultats...
+
+
+    #-------------------------------------------------------------------------
     def process_people(self, max_level, uistate, window, default_person, length):
         """Traite la liste des personnes filtrées."""
         count = 0
@@ -351,6 +359,8 @@ class RelationTab(tool.Tool, ManagedWindow):
             count += 1
             self.progress.step()
             person = self.dbstate.db.get_person_from_handle(handle)
+            thread = Thread(target=self.long_running_task, args=(default_person, person,))
+            thread.start()
             _LOG.debug(f"Processing person: {name_displayer.display(person)}")
 
             dist = self.relationship.get_relationship_distance_new(
@@ -411,7 +421,6 @@ class RelationTab(tool.Tool, ManagedWindow):
 
         self.progress.close()
         _LOG.info(f"Total processing time: {time.perf_counter() - step_one} seconds.")
-
 
 
     #-------------------------------------------------------------------------
@@ -506,7 +515,7 @@ class RelationTabOptions(tool.ToolOptions):
     def __init__(self, name, person_id=None):
         tool.ToolOptions.__init__(self, name, person_id)
         self.options_dict = {
-            'enable_network_metrics': False,  # Option pour activer les métriques de réseau
+            'enable_network_metrics': True,  # Option pour activer les métriques de réseau
         }
         self.options_help = {
             'enable_network_metrics': (
@@ -517,4 +526,3 @@ class RelationTabOptions(tool.ToolOptions):
                 True
             ),
         }
-
