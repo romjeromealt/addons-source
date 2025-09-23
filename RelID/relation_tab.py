@@ -4,6 +4,7 @@
 # Copyright (C) 2000-2006  Donald N. Allingham
 # Copyright (C) 2008       Brian G. Matherly
 # Copyright (C) 2010       Jakim Friant
+# Copyright (C) 2011       Robert Cheramy
 # Copyright (C) 2012       Doug Blank
 # Copyright (C) 2017       Jerome Rapinat
 # Copyright (C) 2025       Jerome Rapinat with Mistral AI (Codestral 25.08)
@@ -30,7 +31,7 @@ import time
 import logging
 import platform
 import os
-from uuid import uuid4
+#from uuid import uuid4
 #from threading import Thread
 from gi.repository import Gtk
 from gramps.gui.listmodel import ListModel, INTEGER
@@ -320,7 +321,7 @@ class RelationTab(tool.Tool, ManagedWindow):
         self.label = _("Relation and distances with root")
         self.dbstate = dbstate
         FilterClass = GenericFilterFactory('Person')
-        self.path = '.'
+        self.path = None
         self.filter = FilterClass()
         self.relationship = get_relationship_calculator()
         self.stats_list = []
@@ -333,22 +334,6 @@ class RelationTab(tool.Tool, ManagedWindow):
             window.set_default_size(1200, 600)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
             window.add(box)
-
-            # Sélection du dossier de sauvegarde
-            chooser = Gtk.FileChooserDialog(
-                _("Folder Chooser"),
-                parent=uistate.window,
-                action=Gtk.FileChooserAction.SELECT_FOLDER,
-                buttons=(
-                    _('_Cancel'), Gtk.ResponseType.CANCEL,
-                    _('_Select'), Gtk.ResponseType.OK
-                )
-            )
-            chooser.set_tooltip_text(_("Please, select a folder"))
-            status = chooser.run()
-            if status == Gtk.ResponseType.OK:
-                self.path = chooser.get_current_folder()
-            chooser.destroy()
 
             ManagedWindow.__init__(self, uistate, [], self.__class__)
             self.set_window(window, None, self.label)
@@ -398,17 +383,16 @@ class RelationTab(tool.Tool, ManagedWindow):
 
         if default_person:
             root_id = default_person.get_gramps_id()
-            #ancestors = rules.person.IsAncestorOf([str(root_id), True])
-            #descendants = rules.person.IsDescendantOf([str(root_id), True])
+            ancestors = rules.person.IsAncestorOf([str(root_id), True])
+            descendants = rules.person.IsDescendantOf([str(root_id), True])
             related = rules.person.IsRelatedWith([str(root_id)])
-            self.filter.add_rule(related)
+            self.filter.add_rule(ancestors)
             _LOG.info("Filtering people related to the root person...")
             self.progress.set_pass(_('Please wait, filtering...'))
             self.filtered_list = self.filter.apply(self.dbstate.db, plist)
             _LOG.info(f"Found {len(self.filtered_list)} related people.")
         else:
-            _LOG.error("No default person set.")
-            WarningDialog(_("No default_person"))
+            _LOG.debug("No default person set.")
             return
 
         # Traitement des personnes
@@ -491,10 +475,12 @@ class RelationTab(tool.Tool, ManagedWindow):
             need = (step_two - step_one) / count
             wait = need * filtered_people
             remain = int(wait) - int(step_two - step_one)
-            header = _("%d/%d \n %d/%d seconds \n %d/%d \n%f|\t%f"
+            #lazy tooltip
+            documentation = _("\nFiltering\tTime process\tCurrent match\tTime per entry\n")
+            header = _("%d/%d \t %d/%d seconds \t %d/%d \t\t%f"
                     % (count, filtered_people, remain, int(wait),
-                    len(self.stats_list), length, float(need), float(0.025)))
-            self.progress.set_header(header)
+                    len(self.stats_list), length, float(need)))
+            self.progress.set_header(documentation + header)
 
             # Ajoute les résultats avec les nouvelles métriques
             result_entry = (
@@ -511,6 +497,26 @@ class RelationTab(tool.Tool, ManagedWindow):
                 if RelationTab.ENABLE_NETWORK_METRICS:
                     model_entry += (int(shared_subtree_size), int(centrality), int(unique_ancestors),   f"{surname_diversity:.2f}")
                 self.model.add(model_entry, int(kekule))
+            else:
+                # Afficher un aperçu des résultats dans la console
+                print("\nAperçu des résultats :")
+                print("-" * 100)
+                print(f"{_('ID Kekulé'):<10} | {_('Relation'):<20} | {_('Nom'):<30} | {'Ga':<5} | {'Gb':<5} | {'MRA':<5} | {_('Rang'):<5} | {_('Période'):<15}")
+                if RelationTab.ENABLE_NETWORK_METRICS:
+                    print(f" | {_('Sous-arbre partagé'):<15} | {_('Centralité'):<10} | {_('Ancêtres uniques'):<15} | {_('Diversité noms'):<15}")
+                print()  # Saut de ligne
+                print("-" * 150)
+
+                for entry in self.stats_list[:max_level * 2]:  # Afficher les premières entrées
+                    kekule, relation, name, Ga, Gb, mra, rank, period = entry[:8]
+                    print(f"{kekule:<10} | {relation[:18]:<20} | {name[:28]:<30} | {Ga:<5} | {Gb:<5} | {mra:<5} | {rank:<5} | {period[:13]:<15}", end="")
+                    if RelationTab.ENABLE_NETWORK_METRICS and len(entry) > 8:
+                        shared_subtree_size, centrality, unique_ancestors, surname_diversity = entry[8:12]
+                        print(f" | {shared_subtree_size:<15} | {centrality:<10} | {unique_ancestors:<15} | {surname_diversity:.2f}")
+                    else:
+                        print()
+                print("-" * 150)
+                print(f"Total des entrées traitées : {len(self.stats_list)}\n")
 
 
             _LOG.debug(f"Added entry for {name} to stats_list.")
@@ -518,30 +524,28 @@ class RelationTab(tool.Tool, ManagedWindow):
         self.progress.close()
         _LOG.info(f"Total processing time: {time.perf_counter() - step_one} seconds.")
 
-        # Afficher un aperçu des résultats dans la console
-        print("\nAperçu des résultats :")
-        print("-" * 100)
-        print(f"{_('ID Kekulé'):<10} | {_('Relation'):<20} | {_('Nom'):<30} | {'Ga':<5} | {'Gb':<5} | {'MRA':<5} | {_('Rang'):<5} | {_('Période'):<15}")
-        if RelationTab.ENABLE_NETWORK_METRICS:
-            print(f" | {_('Sous-arbre partagé'):<15} | {_('Centralité'):<10} | {_('Ancêtres uniques'):<15} | {_('Diversité noms'):<15}")
-        print()  # Saut de ligne
-        print("-" * 150)
-
-        for entry in self.stats_list[:max_level * 2]:  # Afficher les premières entrées
-            kekule, relation, name, Ga, Gb, mra, rank, period = entry[:8]
-            print(f"{kekule:<10} | {relation[:18]:<20} | {name[:28]:<30} | {Ga:<5} | {Gb:<5} | {mra:<5} | {rank:<5} | {period[:13]:<15}", end="")
-            if RelationTab.ENABLE_NETWORK_METRICS and len(entry) > 8:
-                shared_subtree_size, centrality, unique_ancestors, surname_diversity = entry[8:12]
-                print(f" | {shared_subtree_size:<15} | {centrality:<10} | {unique_ancestors:<15} | {surname_diversity:.2f}")
-            else:
-                print()
-        print("-" * 150)
-        print(f"Total des entrées traitées : {len(self.stats_list)}\n")
-
 
     #-------------------------------------------------------------------------
     def save(self):
         """Enregistre les résultats dans un fichier ODS."""
+        # Sélection du dossier de sauvegarde
+        chooser = Gtk.FileChooserDialog(
+            _("Folder Chooser"),
+            parent=None,
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+            buttons=(
+                _('_Cancel'), Gtk.ResponseType.CANCEL,
+                _('_Select'), Gtk.ResponseType.OK
+            )
+        )
+        chooser.set_tooltip_text(_("Please, select a folder"))
+        status = chooser.run()
+        if status == Gtk.ResponseType.OK:
+            self.path = chooser.get_current_folder()
+        if status == Gtk.ResponseType.CANCEL:
+            _LOG.debug(f"Skip folder selection?")
+            WarningDialog(_("Foldername need"), _("Foldername will be used for saving the content."))
+        chooser.destroy()
         if not self.stats_list:
             _LOG.warning("No data to save.")
             return
@@ -549,8 +553,12 @@ class RelationTab(tool.Tool, ManagedWindow):
         doc = ODSTab(len(self.stats_list))
         doc.creator(self.dbstate.db.get_researcher().get_name())
         filename = self.dbstate.db.get_default_person().get_handle() + '.ods'
-        if self.path != '.':
+        if self.path is not None:
             filename = os.path.join(self.path, filename)
+        else:
+            _LOG.debug(f"Failed to get the foldername, maybe you did not set one?")
+            WarningDialog(_("Did you set a foldername?"), _("Cannot set a valid location."))
+            return
         try:
             with open(filename, "w", encoding='utf8') as f:
                 pass
