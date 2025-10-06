@@ -663,9 +663,10 @@ class RelationTab(tool.Tool, ManagedWindow):
                 spreadsheet.set_row(index % 2)
                 spreadsheet.write_table_data(entry)
             spreadsheet.finalize()
-            # Afficher un message indiquant où le fichier a été enregistré
-            print(f"Le fichier a été enregistré sous : {filename}")
-            _LOG.info(f"Data successfully saved to {filename}.")
+            if os.access(self.path, os.R_OK | os.W_OK | os.X_OK):
+                # Afficher un message indiquant où le fichier a été enregistré
+                print(f"Le fichier a été enregistré sous : {filename}")
+                _LOG.info(f"Data successfully saved to {filename}.")
         except (FileNotFoundError or IsADirectoryError) as e:
             _LOG.error(f"Failed to save data: {e}")
             WarningDialog(_("Failed to save data."), str(e))
@@ -715,7 +716,24 @@ class TableReport:
     def finalize(self):
         _LOG.debug("Finalizing ODS file.")
         self.doc.end_page()
-        self.doc.close()
+        try:
+            self.doc.close()
+        except:
+            # check whether the dir has rwx permissions
+            if not os.access(os.getcwd(), os.R_OK | os.W_OK | os.X_OK):
+                ErrorDialog(
+                    _("Permission problem"),
+                    _(
+                        "You do not have permission to write "
+                        "under the directory %s\n\n"
+                        "Please select another directory or correct "
+                        "the permissions."
+                    )
+                    % self.path,
+                    parent=None,
+                )
+            else: 
+                return
 
     def write_table_data(self, data):
         self.doc.start_row()
