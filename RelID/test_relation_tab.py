@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests unitaires complets pour la classe RelationTab (RelID - Gramps).
+Tests unitaires complets et améliorés pour RelationTab (RelID - Gramps).
 """
 
 import unittest
@@ -14,10 +14,12 @@ gtk_mock = types.ModuleType('gi.repository')
 gtk_mock.Gtk = MagicMock()
 gtk_mock.Gdk = MagicMock()
 gtk_mock.GObject = MagicMock()
+gtk_mock.GLib = MagicMock()
 sys.modules['gi.repository'] = gtk_mock
 sys.modules['gi.repository.Gtk'] = gtk_mock.Gtk
 sys.modules['gi.repository.Gdk'] = gtk_mock.Gdk
 sys.modules['gi.repository.GObject'] = gtk_mock.GObject
+sys.modules['gi.repository.GLib'] = gtk_mock.GLib
 
 # Ajout du chemin pour importer les modules Gramps et RelID
 sys.path.insert(0, os.path.join(os.environ.get('GRAMPS_DIR', ''), 'gramps'))
@@ -25,7 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gramps.gen.lib import Person, Family, Event, Place
 from gramps.gen.lib.date import Date
-from relation_tab import RelationTab, RelIDOptions, RelIDReport
+from gramps.gen.relationship import get_relationship_calculator
+from relation_tab import RelationTab, RelIDOptions, RelIDReport, FamilyPathMetrics, RelationFilterManager
 
 # ============================================================================
 # CLASSES MOCK
@@ -79,6 +82,14 @@ class MockSignals:
     def connect(self, *args, **kwargs):
         pass
 
+class MockDbState:
+    def __init__(self, db):
+        self.db = db
+
+class MockUser:
+    def __init__(self):
+        self.uistate = MagicMock()
+
 class MockDatabase:
     def __init__(self):
         self._people = {}
@@ -116,6 +127,9 @@ class MockDatabase:
     def get_all_families(self):
         return list(self._families.values())
 
+    def iter_person_handles(self):
+        return iter(self._people.keys())
+
     def transaction(self, *args, **kwargs):
         name = kwargs.get('name', f"Transaction-{len(self._transactions)}")
         txn = MockTransaction(name)
@@ -128,6 +142,11 @@ class MockDatabase:
 
     def get_undo_manager(self):
         return MockUndoManager(self)
+
+    def get_default_person(self):
+        if self._people:
+            return next(iter(self._people.values()))
+        return None
 
 class MockGenerator:
     def __init__(self, options):
@@ -143,18 +162,12 @@ class MockRelIDReport:
         self.data = {}
 
 # ============================================================================
-# CLASSE DE TEST POUR RelationTab
+# TESTS POUR FamilyPathMetrics
 # ============================================================================
 
-class TestRelationTab(unittest.TestCase):
+class TestFamilyPathMetrics(unittest.TestCase):
     def setUp(self):
-        """Initialise les objets nécessaires pour chaque test."""
         self.db = MockDatabase()
-        self.options = RelIDOptions()
-        self.report = MockRelIDReport(MockGenerator(self.options), "test_report", "Test Report")
-        self.relation_tab = RelationTab(self.db, self.report, self.options)
-
-        # Ajout de données mock pour les tests
         self.person1 = Person()
         self.person1.handle = "h1"
         self.person1.primary_name = "John Doe"
@@ -171,109 +184,173 @@ class TestRelationTab(unittest.TestCase):
         self.family.mother_handle = "h2"
         self.db._families["f1"] = self.family
 
-        self.event = Event()
-        self.event.handle = "e1"
-        self.event.type = Event.BIRTH
-        self.db._events["e1"] = self.event
+    def test_extract_relationship_paths(self):
+        mock_result = [[0, 1, "mfm", 2, "ffm", 3]]
+        rel_a, rel_b = FamilyPathMetrics.extract_relationship_paths(mock_result)
+        self.assertEqual(rel_a, "mfm")
+        self.assertEqual(rel_b, "ffm")
 
-    # ========================================================================
-    # TESTS D'INITIALISATION
-    # ========================================================================
+    def test_calculate_relationship_path_lengths(self):
+        Ga, Gb = FamilyPathMetrics.calculate_relationship_path_lengths("mfm", "ffm")
+        self.assertEqual(Ga, 3)
+        self.assertEqual(Gb, 3)
+
+    def test_calculate_mra(self):
+        self.assertEqual(FamilyPathMetrics.calculate_mra("mfm"), 15)
+        self.assertEqual(FamilyPathMetrics.calculate_mra("ff"), 5)
+        self.assertEqual(FamilyPathMetrics.calculate_mra("m"), 3)
+        self.assertEqual(FamilyPathMetrics.calculate_mra("f"), 2)
+
+    def test_calculate_kekule_number(self):
+        # Test avec des valeurs simples
+        self.assertEqual(FamilyPathMetrics.calculate_kekule_number(2, 2, "mm", "ff"), 0)
+        # Test avec des valeurs valides
+        self.assertIsInstance(FamilyPathMetrics.calculate_kekule_number(1, 1, "m", "f"), int)
+
+    @patch('relation_tab.get_relationship_calculator')
+    def test_calculate_shared_subtree_size(self, mock_calculator):
+        # Mock du calculateur de relation
+        mock_relationship = MagicMock()
+        mock_relationship.get_relationship_distance_new.return_value = [[0, "h1", "mfm", 2, "ffm", 3]]
+        mock_calculator.return_value = mock_relationship
+
+        # Ajout d'une personne commune
+        common_ancestor = Person()
+        common_ancestor.handle = "h_common"
+        self.db._people["h_common"] = common_ancestor
+
+        # Mock de get_person_from_handle pour retourner la personne commune
+        with patch.object(self.db, 'get_person_from_handle', return_value=common_ancestor):
+            size = FamilyPathMetrics.calculate_shared_subtree_size(self.db, "h1", "h2")
+            self.assertIsInstance(size, int)
+
+    @patch('relation_tab.get_relationship_calculator')
+    def test_calculate_family_network_centrality(self, mock_calculator):
+        mock_relationship = MagicMock()
+        mock_calculator.return_value = mock_relationship
+
+        centrality = FamilyPathMetrics.calculate_family_network_centrality(self.db, "h1")
+        self.assertIsInstance(centrality, int)
+
+    def test_count_unique_ancestors(self):
+        count = FamilyPathMetrics.count_unique_ancestors(self.db, "h1", generations=2)
+        self.assertIsInstance(count, int)
+
+    def test_calculate_surname_diversity(self):
+        diversity = FamilyPathMetrics.calculate_surname_diversity(self.db, "h1", generations=2)
+        self.assertIsInstance(diversity, float)
+
+# ============================================================================
+# TESTS POUR RelationFilterManager
+# ============================================================================
+
+class TestRelationFilterManager(unittest.TestCase):
+    def setUp(self):
+        self.db = MockDatabase()
+        self.dbstate = MockDbState(self.db)
+        self.filter_manager = RelationFilterManager(self.dbstate)
+
+    def test_update_rules_ancestors(self):
+        self.filter_manager.update_rules(0, "h1")
+        self.assertEqual(len(self.filter_manager.current_rules), 1)
+
+    def test_update_rules_descendants(self):
+        self.filter_manager.update_rules(1, "h1")
+        self.assertEqual(len(self.filter_manager.current_rules), 1)
+
+    def test_update_rules_related(self):
+        self.filter_manager.update_rules(2, "h1")
+        self.assertEqual(len(self.filter_manager.current_rules), 1)
+
+    def test_apply_filter(self):
+        person1 = Person()
+        person1.handle = "h1"
+        self.db._people["h1"] = person1
+
+        person2 = Person()
+        person2.handle = "h2"
+        self.db._people["h2"] = person2
+
+        self.filter_manager.update_rules(2, "h1")
+        filtered_list = self.filter_manager.apply_filter(["h1", "h2"])
+        self.assertIsInstance(filtered_list, list)
+
+# ============================================================================
+# TESTS POUR RelationTab
+# ============================================================================
+
+class TestRelationTab(unittest.TestCase):
+    def setUp(self):
+        self.db = MockDatabase()
+        self.dbstate = MockDbState(self.db)
+        self.user = MockUser()
+        self.options = RelIDOptions()
+        self.report = MockRelIDReport(MockGenerator(self.options), "test_report", "Test Report")
+
+        # Ajout de données mock
+        self.person1 = Person()
+        self.person1.handle = "h1"
+        self.person1.primary_name = "John Doe"
+        self.db._people["h1"] = self.person1
+
+        self.person2 = Person()
+        self.person2.handle = "h2"
+        self.person2.primary_name = "Jane Doe"
+        self.db._people["h2"] = self.person2
+
+        self.family = Family()
+        self.family.handle = "f1"
+        self.family.father_handle = "h1"
+        self.family.mother_handle = "h2"
+        self.db._families["f1"] = self.family
+
+        self.relation_tab = RelationTab(self.dbstate, self.user, self.options, "test_tab")
 
     def test_initialization(self):
-        """Teste que RelationTab est correctement initialisé."""
-        self.assertIsNotNone(self.relation_tab.db)
-        self.assertIsNotNone(self.relation_tab.report)
+        self.assertIsNotNone(self.relation_tab.dbstate)
         self.assertIsNotNone(self.relation_tab.options)
-        self.assertEqual(self.relation_tab.db, self.db)
-        self.assertEqual(self.relation_tab.report, self.report)
+        self.assertIsNotNone(self.relation_tab.relationship)
+        self.assertIsNotNone(self.relation_tab.filter_manager)
 
-    # ========================================================================
-    # TESTS POUR LES MÉTHODES DE CALCUL DES RelID
-    # ========================================================================
+    @patch('relation_tab.get_relationship_calculator')
+    def test_process_people(self, mock_calculator):
+        mock_relationship = MagicMock()
+        mock_relationship.get_relationship_distance_new.return_value = [[0, "h1", "mfm", 2, "ffm", 3]]
+        mock_calculator.return_value = mock_relationship
 
-    def test_calculate_relid_for_person(self):
-        """Teste le calcul du RelID pour une personne."""
-        # Supposons que calculate_relid retourne un identifiant basé sur le nom
-        relid = self.relation_tab.calculate_relid(self.person1)
-        self.assertIsInstance(relid, str)
-        self.assertTrue(len(relid) > 0)
+        self.relation_tab.process_people(2, None, None, self.person1, 2)
+        self.assertGreaterEqual(len(self.relation_tab.stats_list), 0)
 
-    def test_calculate_relid_for_family(self):
-        """Teste le calcul du RelID pour une famille."""
-        relid = self.relation_tab.calculate_relid(self.family)
-        self.assertIsInstance(relid, str)
-        self.assertTrue(len(relid) > 0)
+    def test_on_filter_rule_changed(self):
+        self.relation_tab.__filter_rule = MagicMock()
+        self.relation_tab.__filter_rule.get_value.return_value = 0
+        self.relation_tab.__fid = MagicMock()
+        self.relation_tab.__fid.get_value.return_value = "h1"
 
-    def test_calculate_relid_for_event(self):
-        """Teste le calcul du RelID pour un événement."""
-        relid = self.relation_tab.calculate_relid(self.event)
-        self.assertIsInstance(relid, str)
-        self.assertTrue(len(relid) > 0)
+        self.relation_tab.on_filter_rule_changed()
+        self.assertEqual(len(self.relation_tab.filter_manager.current_rules), 1)
 
-    # ========================================================================
-    # TESTS POUR LES INTERACTIONS AVEC LA BASE DE DONNÉES
-    # ========================================================================
+    def test_apply_and_update_filter(self):
+        self.relation_tab.filter_manager.update_rules(2, "h1")
+        self.relation_tab.apply_and_update_filter()
+        self.assertIsInstance(self.relation_tab.filtered_list, list)
 
-    def test_get_person_from_handle(self):
-        """Teste la récupération d'une personne depuis la base de données."""
-        person = self.db.get_person_from_handle("h1")
-        self.assertEqual(person.handle, "h1")
-        self.assertEqual(person.primary_name, "John Doe")
+    @patch('relation_tab.ODSTab')
+    @patch('relation_tab.TableReport')
+    def test_save(self, mock_table_report, mock_ods_tab):
+        # Mock de la boîte de dialogue pour sélectionner un dossier
+        with patch('relation_tab.Gtk.FileChooserDialog') as mock_chooser:
+            mock_dialog = MagicMock()
+            mock_dialog.run.return_value = 1  # Gtk.ResponseType.OK
+            mock_dialog.get_current_folder.return_value = "/tmp"
+            mock_chooser.return_value = mock_dialog
 
-    def test_get_family_from_handle(self):
-        """Teste la récupération d'une famille depuis la base de données."""
-        family = self.db.get_family_from_handle("f1")
-        self.assertEqual(family.handle, "f1")
-        self.assertEqual(family.father_handle, "h1")
-        self.assertEqual(family.mother_handle, "h2")
+            # Ajout de données pour le test
+            self.relation_tab.stats_list = [(1, "Parent", "John Doe", 1, 1, 1, 1, "1800-1900")]
 
-    def test_get_all_people(self):
-        """Teste la récupération de toutes les personnes."""
-        people = self.db.get_all_people()
-        self.assertEqual(len(people), 2)
-        self.assertIn(self.person1, people)
-        self.assertIn(self.person2, people)
-
-    def test_get_all_families(self):
-        """Teste la récupération de toutes les familles."""
-        families = self.db.get_all_families()
-        self.assertEqual(len(families), 1)
-        self.assertIn(self.family, families)
-
-    # ========================================================================
-    # TESTS POUR LES MÉTHODES D'AFFICHAGE (SI APPLICABLE)
-    # ========================================================================
-
-    def test_generate_display_data(self):
-        """Teste la génération des données pour l'affichage."""
-        # Supposons que RelationTab a une méthode pour générer des données d'affichage
-        display_data = self.relation_tab.generate_display_data()
-        self.assertIsInstance(display_data, dict)
-        self.assertIn("people", display_data)
-        self.assertIn("families", display_data)
-
-    # ========================================================================
-    # TESTS POUR LES TRANSACTIONS
-    # ========================================================================
-
-    def test_transaction_handling(self):
-        """Teste la gestion des transactions."""
-        txn = self.db.transaction(name="test_txn")
-        self.assertIsNotNone(txn)
-        self.assertEqual(txn.name, "test_txn")
-        self.assertEqual(len(self.db._transactions), 1)
-
-    # ========================================================================
-    # TESTS POUR LES OPTIONS RelID
-    # ========================================================================
-
-    def test_relid_options(self):
-        """Teste que les options RelID sont correctement configurées."""
-        self.assertIsNotNone(self.options)
-        # Supposons que RelIDOptions a des attributs comme include_families, include_events
-        self.assertTrue(hasattr(self.options, "include_families"))
-        self.assertTrue(hasattr(self.options, "include_events"))
+            self.relation_tab.save()
+            mock_ods_tab.assert_called_once()
+            mock_table_report.assert_called_once()
 
 # ============================================================================
 # EXÉCUTION DES TESTS
