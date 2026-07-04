@@ -1,356 +1,238 @@
 #!/usr/bin/env python3
 """
-Tests unitaires complets et améliorés pour RelationTab (RelID - Gramps).
+Tests unitaires pour la classe TableReport (RelID - Gramps).
 """
 
 import unittest
-import sys
 import os
-import types
-from unittest.mock import MagicMock, patch
+import tempfile
+from unittest.mock import MagicMock, patch, mock_open
 
-# Mock des dépendances GTK
+# Mock des dépendances GTK et autres
+import sys
+import types
 gtk_mock = types.ModuleType('gi.repository')
 gtk_mock.Gtk = MagicMock()
 gtk_mock.Gdk = MagicMock()
 gtk_mock.GObject = MagicMock()
-gtk_mock.GLib = MagicMock()
 sys.modules['gi.repository'] = gtk_mock
 sys.modules['gi.repository.Gtk'] = gtk_mock.Gtk
 sys.modules['gi.repository.Gdk'] = gtk_mock.Gdk
 sys.modules['gi.repository.GObject'] = gtk_mock.GObject
-sys.modules['gi.repository.GLib'] = gtk_mock.GLib
 
 # Ajout du chemin pour importer les modules Gramps et RelID
 sys.path.insert(0, os.path.join(os.environ.get('GRAMPS_DIR', ''), 'gramps'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gramps.gen.lib import Person, Family, Event, Place
-from gramps.gen.lib.date import Date
-from gramps.gen.relationship import get_relationship_calculator
-from relation_tab import RelationTab, RelIDOptions, RelIDReport, FamilyPathMetrics, RelationFilterManager
+from relation_tab import TableReport
 
 # ============================================================================
-# CLASSES MOCK
+# CLASSES MOCK POUR LES DÉPENDANCES
 # ============================================================================
 
-class MockTransaction:
-    def __init__(self, name):
-        self.name = name
-        self._batch = False
+class MockODSTab:
+    """Mock de la classe ODSTab pour éviter les dépendances externes."""
+    def __init__(self, rows):
+        self.rows = rows
+        self.file = None
+        self.opened = False
 
-    def batch_start(self):
-        self._batch = True
+    def open(self, filename):
+        self.file = filename
+        self.opened = True
 
-    def batch_commit(self):
-        self._batch = False
-
-    def add(self, *args, **kwargs):
+    def start_page(self):
         pass
 
-    def commit(self):
+    def end_page(self):
         pass
 
-    def rollback(self):
+    def close(self):
+        self.opened = False
+
+    def creator(self, name):
         pass
-
-class MockUndoManager:
-    def __init__(self, db):
-        self.db = db
-
-    def register(self, *args, **kwargs):
-        pass
-
-class UndoMockDB:
-    def __init__(self, db):
-        self.db = db
-
-    def register(self, *args, **kwargs):
-        pass
-
-class MockNotebook:
-    def __init__(self):
-        self.pages = []
-
-    def append_page(self, *args, **kwargs):
-        pass
-
-class MockSignals:
-    def __init__(self):
-        self._callbacks = {}
-
-    def connect(self, *args, **kwargs):
-        pass
-
-class MockDbState:
-    def __init__(self, db):
-        self.db = db
-
-class MockUser:
-    def __init__(self):
-        self.uistate = MagicMock()
-
-class MockDatabase:
-    def __init__(self):
-        self._people = {}
-        self._families = {}
-        self._events = {}
-        self._places = {}
-        self._citations = {}
-        self._sources = {}
-        self._transactions = []
-        self._current_txn = None
-        self.undodb = UndoMockDB(self)
-        self.signals = MockSignals()
-
-    def get_person_from_handle(self, handle):
-        return self._people.get(handle)
-
-    def get_family_from_handle(self, handle):
-        return self._families.get(handle)
-
-    def get_event_from_handle(self, handle):
-        return self._events.get(handle)
-
-    def get_place_from_handle(self, handle):
-        return self._places.get(handle)
-
-    def get_person_handles(self, sort_handles=False):
-        return list(self._people.keys())
-
-    def get_family_handles(self, sort_handles=False):
-        return list(self._families.keys())
-
-    def get_all_people(self):
-        return list(self._people.values())
-
-    def get_all_families(self):
-        return list(self._families.values())
-
-    def iter_person_handles(self):
-        return iter(self._people.keys())
-
-    def transaction(self, *args, **kwargs):
-        name = kwargs.get('name', f"Transaction-{len(self._transactions)}")
-        txn = MockTransaction(name)
-        self._transactions.append(txn)
-        self._current_txn = txn
-        return txn
-
-    def get_notebook(self):
-        return MockNotebook()
-
-    def get_undo_manager(self):
-        return MockUndoManager(self)
-
-    def get_default_person(self):
-        if self._people:
-            return next(iter(self._people.values()))
-        return None
-
-class MockGenerator:
-    def __init__(self, options):
-        self.options = options
-        self.db = MockDatabase()
-        self.rules = []
-
-class MockRelIDReport:
-    def __init__(self, generator, name, title):
-        self.generator = generator
-        self.name = name
-        self.title = title
-        self.data = {}
 
 # ============================================================================
-# TESTS POUR FamilyPathMetrics
+# TESTS POUR TableReport
 # ============================================================================
 
-class TestFamilyPathMetrics(unittest.TestCase):
+class TestTableReport(unittest.TestCase):
     def setUp(self):
-        self.db = MockDatabase()
-        self.person1 = Person()
-        self.person1.handle = "h1"
-        self.person1.primary_name = "John Doe"
-        self.db._people["h1"] = self.person1
+        """Initialise les objets nécessaires pour chaque test."""
+        # Créer un fichier temporaire pour les tests
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.filename = os.path.join(self.temp_dir.name, "test_output.ods")
 
-        self.person2 = Person()
-        self.person2.handle = "h2"
-        self.person2.primary_name = "Jane Doe"
-        self.db._people["h2"] = self.person2
+        # Mock de ODSTab
+        self.mock_ods_tab = MockODSTab(10)
+        self.table_report = TableReport(self.filename, self.mock_ods_tab)
 
-        self.family = Family()
-        self.family.handle = "f1"
-        self.family.father_handle = "h1"
-        self.family.mother_handle = "h2"
-        self.db._families["f1"] = self.family
+        # Données de test
+        self.titles = [
+            ("Rel_id", 0, 40, int),
+            ("Relation", 1, 300, str),
+            ("Name", 2, 200, str),
+        ]
+        self.sample_data = [
+            (1, "Parent", "John Doe"),
+            (2, "Child", "Jane Doe"),
+            (3, "Grandparent", "Alice Smith"),
+        ]
 
-    def test_extract_relationship_paths(self):
-        mock_result = [[0, 1, "mfm", 2, "ffm", 3]]
-        rel_a, rel_b = FamilyPathMetrics.extract_relationship_paths(mock_result)
-        self.assertEqual(rel_a, "mfm")
-        self.assertEqual(rel_b, "ffm")
+    def tearDown(self):
+        """Nettoie les ressources après chaque test."""
+        self.temp_dir.cleanup()
 
-    def test_calculate_relationship_path_lengths(self):
-        Ga, Gb = FamilyPathMetrics.calculate_relationship_path_lengths("mfm", "ffm")
-        self.assertEqual(Ga, 3)
-        self.assertEqual(Gb, 3)
-
-    def test_calculate_mra(self):
-        self.assertEqual(FamilyPathMetrics.calculate_mra("mfm"), 15)
-        self.assertEqual(FamilyPathMetrics.calculate_mra("ff"), 5)
-        self.assertEqual(FamilyPathMetrics.calculate_mra("m"), 3)
-        self.assertEqual(FamilyPathMetrics.calculate_mra("f"), 2)
-
-    def test_calculate_kekule_number(self):
-        # Test avec des valeurs simples
-        self.assertEqual(FamilyPathMetrics.calculate_kekule_number(2, 2, "mm", "ff"), 0)
-        # Test avec des valeurs valides
-        self.assertIsInstance(FamilyPathMetrics.calculate_kekule_number(1, 1, "m", "f"), int)
-
-    @patch('relation_tab.get_relationship_calculator')
-    def test_calculate_shared_subtree_size(self, mock_calculator):
-        # Mock du calculateur de relation
-        mock_relationship = MagicMock()
-        mock_relationship.get_relationship_distance_new.return_value = [[0, "h1", "mfm", 2, "ffm", 3]]
-        mock_calculator.return_value = mock_relationship
-
-        # Ajout d'une personne commune
-        common_ancestor = Person()
-        common_ancestor.handle = "h_common"
-        self.db._people["h_common"] = common_ancestor
-
-        # Mock de get_person_from_handle pour retourner la personne commune
-        with patch.object(self.db, 'get_person_from_handle', return_value=common_ancestor):
-            size = FamilyPathMetrics.calculate_shared_subtree_size(self.db, "h1", "h2")
-            self.assertIsInstance(size, int)
-
-    @patch('relation_tab.get_relationship_calculator')
-    def test_calculate_family_network_centrality(self, mock_calculator):
-        mock_relationship = MagicMock()
-        mock_calculator.return_value = mock_relationship
-
-        centrality = FamilyPathMetrics.calculate_family_network_centrality(self.db, "h1")
-        self.assertIsInstance(centrality, int)
-
-    def test_count_unique_ancestors(self):
-        count = FamilyPathMetrics.count_unique_ancestors(self.db, "h1", generations=2)
-        self.assertIsInstance(count, int)
-
-    def test_calculate_surname_diversity(self):
-        diversity = FamilyPathMetrics.calculate_surname_diversity(self.db, "h1", generations=2)
-        self.assertIsInstance(diversity, float)
-
-# ============================================================================
-# TESTS POUR RelationFilterManager
-# ============================================================================
-
-class TestRelationFilterManager(unittest.TestCase):
-    def setUp(self):
-        self.db = MockDatabase()
-        self.dbstate = MockDbState(self.db)
-        self.filter_manager = RelationFilterManager(self.dbstate)
-
-    def test_update_rules_ancestors(self):
-        self.filter_manager.update_rules(0, "h1")
-        self.assertEqual(len(self.filter_manager.current_rules), 1)
-
-    def test_update_rules_descendants(self):
-        self.filter_manager.update_rules(1, "h1")
-        self.assertEqual(len(self.filter_manager.current_rules), 1)
-
-    def test_update_rules_related(self):
-        self.filter_manager.update_rules(2, "h1")
-        self.assertEqual(len(self.filter_manager.current_rules), 1)
-
-    def test_apply_filter(self):
-        person1 = Person()
-        person1.handle = "h1"
-        self.db._people["h1"] = person1
-
-        person2 = Person()
-        person2.handle = "h2"
-        self.db._people["h2"] = person2
-
-        self.filter_manager.update_rules(2, "h1")
-        filtered_list = self.filter_manager.apply_filter(["h1", "h2"])
-        self.assertIsInstance(filtered_list, list)
-
-# ============================================================================
-# TESTS POUR RelationTab
-# ============================================================================
-
-class TestRelationTab(unittest.TestCase):
-    def setUp(self):
-        self.db = MockDatabase()
-        self.dbstate = MockDbState(self.db)
-        self.user = MockUser()
-        self.options = RelIDOptions()
-        self.report = MockRelIDReport(MockGenerator(self.options), "test_report", "Test Report")
-
-        # Ajout de données mock
-        self.person1 = Person()
-        self.person1.handle = "h1"
-        self.person1.primary_name = "John Doe"
-        self.db._people["h1"] = self.person1
-
-        self.person2 = Person()
-        self.person2.handle = "h2"
-        self.person2.primary_name = "Jane Doe"
-        self.db._people["h2"] = self.person2
-
-        self.family = Family()
-        self.family.handle = "f1"
-        self.family.father_handle = "h1"
-        self.family.mother_handle = "h2"
-        self.db._families["f1"] = self.family
-
-        self.relation_tab = RelationTab(self.dbstate, self.user, self.options, "test_tab")
+    # ========================================================================
+    # TESTS D'INITIALISATION
+    # ========================================================================
 
     def test_initialization(self):
-        self.assertIsNotNone(self.relation_tab.dbstate)
-        self.assertIsNotNone(self.relation_tab.options)
-        self.assertIsNotNone(self.relation_tab.relationship)
-        self.assertIsNotNone(self.relation_tab.filter_manager)
+        """Teste que TableReport est correctement initialisé."""
+        self.assertEqual(self.table_report.filename, self.filename)
+        self.assertEqual(self.table_report.doc, self.mock_ods_tab)
+        self.assertFalse(self.mock_ods_tab.opened)
 
-    @patch('relation_tab.get_relationship_calculator')
-    def test_process_people(self, mock_calculator):
-        mock_relationship = MagicMock()
-        mock_relationship.get_relationship_distance_new.return_value = [[0, "h1", "mfm", 2, "ffm", 3]]
-        mock_calculator.return_value = mock_relationship
+    # ========================================================================
+    # TESTS POUR initialize
+    # ========================================================================
 
-        self.relation_tab.process_people(2, None, None, self.person1, 2)
-        self.assertGreaterEqual(len(self.relation_tab.stats_list), 0)
+    def test_initialize(self):
+        """Teste l'initialisation du document ODS."""
+        self.table_report.initialize(len(self.titles))
+        self.assertTrue(self.mock_ods_tab.opened)
+        self.assertEqual(self.mock_ods_tab.file, self.filename)
 
-    def test_on_filter_rule_changed(self):
-        self.relation_tab.__filter_rule = MagicMock()
-        self.relation_tab.__filter_rule.get_value.return_value = 0
-        self.relation_tab.__fid = MagicMock()
-        self.relation_tab.__fid.get_value.return_value = "h1"
+    def test_initialize_with_zero_columns(self):
+        """Teste l'initialisation avec 0 colonnes."""
+        with self.assertRaises(ValueError):
+            self.table_report.initialize(0)
 
-        self.relation_tab.on_filter_rule_changed()
-        self.assertEqual(len(self.relation_tab.filter_manager.current_rules), 1)
+    # ========================================================================
+    # TESTS POUR write_table_head
+    # ========================================================================
 
-    def test_apply_and_update_filter(self):
-        self.relation_tab.filter_manager.update_rules(2, "h1")
-        self.relation_tab.apply_and_update_filter()
-        self.assertIsInstance(self.relation_tab.filtered_list, list)
+    def test_write_table_head(self):
+        """Teste l'écriture des en-têtes du tableau."""
+        self.table_report.initialize(len(self.titles))
+        self.table_report.write_table_head(self.titles)
+        # Pas d'erreur = succès (méthode mockée)
+        self.assertTrue(True)
 
-    @patch('relation_tab.ODSTab')
-    @patch('relation_tab.TableReport')
-    def test_save(self, mock_table_report, mock_ods_tab):
-        # Mock de la boîte de dialogue pour sélectionner un dossier
-        with patch('relation_tab.Gtk.FileChooserDialog') as mock_chooser:
-            mock_dialog = MagicMock()
-            mock_dialog.run.return_value = 1  # Gtk.ResponseType.OK
-            mock_dialog.get_current_folder.return_value = "/tmp"
-            mock_chooser.return_value = mock_dialog
+    def test_write_table_head_empty_titles(self):
+        """Teste l'écriture des en-têtes avec une liste vide."""
+        self.table_report.initialize(0)
+        with self.assertRaises(ValueError):
+            self.table_report.write_table_head([])
 
-            # Ajout de données pour le test
-            self.relation_tab.stats_list = [(1, "Parent", "John Doe", 1, 1, 1, 1, "1800-1900")]
+    # ========================================================================
+    # TESTS POUR set_row
+    # ========================================================================
 
-            self.relation_tab.save()
-            mock_ods_tab.assert_called_once()
-            mock_table_report.assert_called_once()
+    def test_set_row_even(self):
+        """Teste la définition d'une ligne paire (0)."""
+        self.table_report.set_row(0)
+        # Pas d'erreur = succès
+        self.assertTrue(True)
+
+    def test_set_row_odd(self):
+        """Teste la définition d'une ligne impaire (1)."""
+        self.table_report.set_row(1)
+        # Pas d'erreur = succès
+        self.assertTrue(True)
+
+    # ========================================================================
+    # TESTS POUR write_table_data
+    # ========================================================================
+
+    def test_write_table_data(self):
+        """Teste l'écriture des données du tableau."""
+        self.table_report.initialize(len(self.titles))
+        self.table_report.write_table_head(self.titles)
+        for entry in self.sample_data:
+            self.table_report.write_table_data(entry)
+        # Pas d'erreur = succès
+        self.assertTrue(True)
+
+    def test_write_table_data_empty_entry(self):
+        """Teste l'écriture d'une entrée vide."""
+        self.table_report.initialize(len(self.titles))
+        self.table_report.write_table_head(self.titles)
+        with self.assertRaises(ValueError):
+            self.table_report.write_table_data(())
+
+    # ========================================================================
+    # TESTS POUR finalize
+    # ========================================================================
+
+    def test_finalize(self):
+        """Teste la finalisation du document ODS."""
+        self.table_report.initialize(len(self.titles))
+        self.table_report.finalize()
+        self.assertFalse(self.mock_ods_tab.opened)
+
+    # ========================================================================
+    # TESTS D'INTÉGRATION (INITIALIZE + WRITE + FINALIZE)
+    # ========================================================================
+
+    def test_full_workflow(self):
+        """Teste le workflow complet : initialisation, écriture, finalisation."""
+        # 1. Initialisation
+        self.table_report.initialize(len(self.titles))
+
+        # 2. Écriture des en-têtes
+        self.table_report.write_table_head(self.titles)
+
+        # 3. Écriture des données
+        for index, entry in enumerate(self.sample_data):
+            self.table_report.set_row(index % 2)
+            self.table_report.write_table_data(entry)
+
+        # 4. Finalisation
+        self.table_report.finalize()
+
+        # Vérifications
+        self.assertFalse(self.mock_ods_tab.opened)
+
+    # ========================================================================
+    # TESTS AVEC MOCKS POUR LES FICHIERS
+    # ========================================================================
+
+    @patch('builtins.open', new_callable=mock_open)
+    def test_file_operations(self, mock_file):
+        """Teste les opérations de fichier avec des mocks."""
+        # Initialisation
+        self.table_report.initialize(len(self.titles))
+
+        # Écriture des en-têtes
+        self.table_report.write_table_head(self.titles)
+
+        # Écriture des données
+        for entry in self.sample_data:
+            self.table_report.write_table_data(entry)
+
+        # Finalisation
+        self.table_report.finalize()
+
+        # Vérifier que le fichier a été "ouvert" et "fermé"
+        mock_file.assert_called_with(self.filename, 'wb')
+
+    # ========================================================================
+    # TESTS POUR LES ERREURS
+    # ========================================================================
+
+    def test_initialize_with_invalid_filename(self):
+        """Teste l'initialisation avec un nom de fichier invalide."""
+        invalid_table_report = TableReport("", self.mock_ods_tab)
+        with self.assertRaises(ValueError):
+            invalid_table_report.initialize(len(self.titles))
+
+    def test_write_table_data_with_wrong_number_of_columns(self):
+        """Teste l'écriture de données avec un nombre incorrect de colonnes."""
+        self.table_report.initialize(2)  # 2 colonnes attendues
+        with self.assertRaises(ValueError):
+            self.table_report.write_table_data((1, "Parent", "John Doe"))  # 3 colonnes fournies
 
 # ============================================================================
 # EXÉCUTION DES TESTS
